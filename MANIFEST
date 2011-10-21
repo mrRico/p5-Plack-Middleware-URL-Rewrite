@@ -1,0 +1,6 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/Plack-Middleware-URL-Rewrite.t
+lib/Plack/Middleware/URL/Rewrite.pm

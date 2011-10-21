@@ -1,0 +1,6 @@
+Revision history for Perl extension Plack::Middleware::URL::Rewrite.
+
+0.01  Fri Oct 21 15:32:07 2011
+	- original version; created by h2xs 1.23 with options
+		-AX Plack::Middleware::URL::Rewrite
+
