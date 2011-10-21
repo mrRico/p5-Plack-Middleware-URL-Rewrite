@@ -9,6 +9,7 @@ use Plack::Util::Accessor qw(conf ttl debug);
 use URI;
 use URI::QueryParam;
 use Config::Mini::WithRegexp;
+use Scalar::Util qw();
 use Carp;
 
 sub call {
@@ -40,11 +41,12 @@ sub _init {
         return;
     }
     
-    my @map = ();
+    my $tree = {};
     for my $rule ($cnf->section) {
         my $data = $cnf->section($rule);
         my $desc = {};
         for (keys %$data) {
+        	next if (!$_ or /^_/ or Scalar::Util::blessed($_));
             if (/^req\.url\.segments[(\d+)]$/) {
                 # описание сегмента ури
                 $desc->{req}->{url}->{segment}->[$1] = $data->{$_};
@@ -75,9 +77,9 @@ sub _init {
                         last;
                     }
                 } else {
-                    # simple value
+                    # simple value for segment
                     my $val = $data->{$_};
-                    $desc->{rew}->{url}->{segment}->[$i] = sub {$val};
+                    $desc->{rew}->{url}->{segment}->[$i] = $val eq '/' ? '' : $val;
                 }
             } elsif (/^rew\.url\.params\.(.+?)/) {
             	my $i = $1;
@@ -96,9 +98,9 @@ sub _init {
                         last;
                     }                    
                 } else {
-                    # simple value
+                    # simple value for param
                     my $val = $data->{$_};
-                    $desc->{rew}->{url}->{param}->{$i} = sub {$val};
+                    $desc->{rew}->{url}->{param}->{$i} = $val;
                 }
             }
         }
@@ -112,20 +114,32 @@ sub _init {
         	$desc->{rew}->{url}->{params_others} ||=1;
         	
         	# chek root
+        	$desc->{req}->{url}->{segment}->[0] ||= '';
+        	$desc->{rew}->{url}->{segment}->[0] ||= '';
         	
-        	# set any match
+        	my $rewriter = sub {
+        		
+        	};
         	
-	        push @map, $desc; 
+	        __add_to_tree($tree, $desc->{req}->{url}, $desc->{rew}->{url}); 
         };
-        
-        
     }
     
-    
+    $self->{rules} = $tree;
     $self->{modified} = $modified;
-    $self->{has_rule} = @map ? 1 : 0;
+    $self->{has_rule} = keys %$tree ? 1 : 0;
     
     return;
+}
+
+sub __add_to_tree {
+	my $tree = shift;
+	my $req  = shift;
+	my $rew  = shift;
+	
+	$tree->{depth} = $desc->{} 
+	
+	return;
 }
 
 sub _make_rewrite {
