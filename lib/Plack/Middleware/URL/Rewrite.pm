@@ -2,7 +2,7 @@ package Plack::Middleware::URL::Rewrite;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.01_01';
 
 use parent 'Plack::Middleware';
 use Plack::Util::Accessor qw(conf ttl debug);
@@ -15,7 +15,7 @@ sub call {
     my $self = shift;
     my $env  = shift;
     
-    # если не инициализирован или протухла инфа
+    # если не инициализирован или протухла инфа о реврайтах
     $self->_init if (not $self->{modified} or ($self->ttl and time > $self->{reolad_time}));
     
     # ищём реврайт если были правила для реврайта
@@ -33,7 +33,6 @@ sub _init {
         $self->{reolad_time} = time + $self->ttl if $self->ttl;
         return;
     }
-    $self->{modified} = $modified;
     
     my $cnf = eval{Config::Mini::WithRegexp->new($self->conf)};
     if ($@) {
@@ -41,28 +40,32 @@ sub _init {
         return;
     }
     
-    my $has_rule = 0; 
+    my @map = ();
     for my $rule ($cnf->section) {
         my $data = $cnf->section($rule);
         my $desc = {};
         for (keys %$data) {
-            if (/^req.url.segments[(\d+)]$/) {
+            if (/^req\.url\.segments[(\d+)]$/) {
                 # описание сегмента ури
                 $desc->{req}->{url}->{segment}->[$1] = $data->{$_};
             } elsif ($_ eq 'req.url.segments.others') {
-                $desc->{req}->{url}->{segments_others} = 1;
-            } elsif (/^req.url.params.(.+?)/) {
-                $desc->{req}->{url}->{param}->{$1} = $data->{$_};
+                $desc->{req}->{url}->{segments_others} = $data->{$_};
             } elsif ($_ eq 'req.url.params.others') {
-                $desc->{req}->{url}->{params_others} = 1;
-            } elsif (/rew.url.segments[(\d+)]/) {
+                $desc->{req}->{url}->{params_others} = $data->{$_};
+            } elsif ($_ eq 'rew.url.params.others') {
+                $desc->{rew}->{url}->{params_others} = 1;
+            } elsif ($_ eq 'rew.url.segments.others') {
+                $desc->{rew}->{url}->{segments_others} = 1;
+            } elsif (/^req\.url\.params.(.+?)/) {
+                $desc->{req}->{url}->{param}->{$1} = $data->{$_};
+            } elsif (/^rew\.url\.segments[(\d+)]/) {
                 my $i = $1;
                 if ($data->{$_} =~ /^req\.url\.segments[(\d+)]\.match\(\$(\d+)\)$/) {
                     my $segment_target = $1;
                     my $match_target = $2;
                     if (ref $desc->{req}->{url}->{segment}->[$segment_target] eq 'Regexp' and $match_target-1 > -1) {
                         # сегмент описан
-                        $desc->{req}->{url}->{segment}->[$i] = sub {
+                        $desc->{rew}->{url}->{segment}->[$i] = sub {
                             $_->{segments}->{$segment_target}->[$match_target-1] || '';
                         };
                     } else {
@@ -71,24 +74,58 @@ sub _init {
                         %$desc = ();
                         last;
                     }
-                    
-                } elsif ($data->{$_} =~ /req\.url\.params\.(.+?)\.match\($(\d+)\)/) {
-                    
                 } else {
                     # simple value
                     my $val = $data->{$_};
-                    $desc->{req}->{url}->{segment}->[$i] = sub {$val};
+                    $desc->{rew}->{url}->{segment}->[$i] = sub {$val};
+                }
+            } elsif (/^rew\.url\.params\.(.+?)/) {
+            	my $i = $1;
+            	if ($data->{$_} =~ /req\.url\.params\.(.+?)\.match\($(\d+)\)/) {
+                    my $param_target = $1;
+                    my $match_target = $2;
+                    if (ref $desc->{req}->{url}->{param}->{$param_target} eq 'Regexp' and $match_target-1 > -1) {
+                        # параметр описан
+                        $desc->{rew}->{url}->{param}->{$i} = sub {
+                            $_->{params}->{$param_target}->[$match_target-1] || '';
+                        };
+                    } else {
+                        # ссылка на сегмент, который не был описан или был описан не регекспом
+                        croak __PACKAGE__.": found error in describe '$_ = ".$data->{$_}."'";
+                        %$desc = ();
+                        last;
+                    }                    
+                } else {
+                    # simple value
+                    my $val = $data->{$_};
+                    $desc->{rew}->{url}->{param}->{$i} = sub {$val};
                 }
             }
         }
         
-        #... if keys %$desc;
+        if (keys %$desc) {
+        	# set default
+        	$desc->{req}->{url}->{segments_others} = 0 unless defined $desc->{req}->{url}->{segments_others}; 
+        	$desc->{req}->{url}->{params_others} ||= 1; 
+        	
+        	$desc->{rew}->{url}->{segments_others} = 0 unless defined $desc->{rew}->{url}->{segments_others};
+        	$desc->{rew}->{url}->{params_others} ||=1;
+        	
+        	# chek root
+        	
+        	# set any match
+        	
+	        push @map, $desc; 
+        };
+        
         
     }
     
     
+    $self->{modified} = $modified;
+    $self->{has_rule} = @map ? 1 : 0;
     
-    $self->{has_rule} = $has_rule;
+    return;
 }
 
 sub _make_rewrite {
