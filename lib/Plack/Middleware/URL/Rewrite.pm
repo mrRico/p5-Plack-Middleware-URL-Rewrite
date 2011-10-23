@@ -137,9 +137,41 @@ sub __add_to_tree {
 	my $req  = shift;
 	my $rew  = shift;
 	
-	$tree->{depth} = $desc->{} 
+	# cur depth
+	my $cd = $#{$req->{segment}};
+	my $sub_tree = $tree->{depth}->{$cd} ||= {};
+    my $segment = shift @{$req->{segment}};
+    my $ref = ref $segment;
+    # TODO оптимизация условия
+	if (defined $segment and not $ref) {
+		# exactly match		
+		$sub_tree->{exactly}->{$segment}  ||= {};
+		if ($cd != 0) {
+			__add_to_tree($sub_tree->{exactly}->{$segment}, $req, $rew)
+		} else {
+			__add_param_node($sub_tree->{exactly}->{$segment}, $req, $rew);
+		} 
+	} elsif ($ref) {
+		# re
+		$sub_tree->{re}->{$segment}       = $cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew);
+	} else {
+		# any
+		$sub_tree->{any}->{$segment}      = $cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew);
+	}
+	return $tree;
+}
+
+sub __add_param_node {
+	my $ret = shift;
+	my $req = shift;
+	my $rew = shift;
 	
-	return;
+	my $req_params_sub = sub {
+		my $url = shift;
+	};
+	
+	
+	
 }
 
 sub _make_rewrite {
@@ -147,8 +179,9 @@ sub _make_rewrite {
     my $env  = shift;
     
     my $uri = URI->new($env->{REQUEST_URI});
-    my @segment = map {length $_ ? $_ : '/'} $uri->path_segments;
-    shift @segment;
+    #my @segment = map {length $_ ? $_ : '/'} $uri->path_segments;
+    #shift @segment;# TODO (? remove this)
+    my @segment = $uri->path_segments;
     
     # не найдено дерево для данного числа сегментов
     my $tree = $self->{rules}->{depth}->{scalar @segment}; 
