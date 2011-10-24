@@ -120,9 +120,13 @@ sub _init {
         	my $rewriter = sub {
         		
         	};
-        	
 	        __add_to_tree($tree, $desc->{req}->{url}, $desc->{rew}->{url}); 
         };
+    }
+    
+    if ($tree->{uri_others_depths}) {
+        # чтобы не тратить потом время на сортировку ключей для uri без определённой глубины
+        @{$tree->{uri_others_depths}} = sort {$b <=> $a} @{$tree->{uri_others_depths}};
     }
     
     $self->{rules} = $tree;
@@ -137,29 +141,89 @@ sub __add_to_tree {
 	my $req  = shift;
 	my $rew  = shift;
 	
-	# cur depth
-	my $cd = $#{$req->{segment}};
-	my $sub_tree = $tree->{depth}->{$cd} ||= {};
-    my $segment = shift @{$req->{segment}};
-    my $ref = ref $segment;
-    # TODO оптимизация условия
-	if (defined $segment and not $ref) {
-		# exactly match		
-		$sub_tree->{exactly}->{$segment}  ||= {};
-		if ($cd != 0) {
-			__add_to_tree($sub_tree->{exactly}->{$segment}, $req, $rew)
-		} else {
-			__add_param_node($sub_tree->{exactly}->{$segment}, $req, $rew);
-		} 
-	} elsif ($ref) {
-		# re
-		$sub_tree->{re}->{$segment}       = $cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew);
-	} else {
-		# any
-		$sub_tree->{any}->{$segment}      = $cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew);
-	}
-	return $tree;
+	$tree = $tree->{$req->{segments_others} ? 'uri_with_others' : 'uri'} ||= {};
+	my $depth = $#{$req->{segment}};
+	
+	# чтобы не тратить потом время на сортировку ключей для uri без определённой глубины
+	if ($req->{segments_others}) {
+	   $tree->{uri_others_depths} ||= [];
+	   push @{$tree->{uri_others_depths}}, $depth;
+	}  
+	
+	# глубина поиска имеет значение только при первом выборе саб-дерева
+	$tree = $tree->{uri_depth}->{$depth} ||= {}; 
+    
+    
+    $tree = __add_segment_node($tree, $req->{segment});
+    # tree is a hash
+    
+    #$tree = __add_segment_node($tree);
+
+    #$tree = __add_rewrite_sub($tree);
+            
+    return;
 }
+
+sub __add_segment_node {
+    my $tree        = shift;
+    my $segments    = shift;
+    
+    # текущая глубина массива сегментов
+    my $cd = $#$segments;
+    # если нет более сегментов - возвращаем участок дерева
+    return $tree if $cd == -1;
+        
+    my $segment = shift @$segments;
+    
+    my $ref = ref $segment;
+    if (defined $segment and not $ref) {
+        # exactly match     
+        $tree = __add_segment_node($tree->{exactly}->{$segment}  ||= {}, $segments);
+    } elsif ($ref) {
+        # re
+        $tree->{re} ||= [];
+        push @{$tree->{re}}, __add_segment_node({}, $segments);
+        $tree = $tree->{re}->[-1];
+    } else {
+        # any
+        $tree = __add_segment_node($tree->{any} ||= {}, $segments);
+    }
+    
+    return $tree;
+}
+
+
+#sub __add_segment_node {
+#    my $tree = shift;
+#    my $req  = shift;
+#    my $rew  = shift;
+#    
+#    # cur depth
+#    my $cd = $#{$req->{segment}};
+#    my $sub_tree = $tree->{depth}->{$cd} ||= {};
+#    my $segment = shift @{$req->{segment}};
+#    my $ref = ref $segment;
+#    # TODO оптимизация условия
+#    if (defined $segment and not $ref) {
+#        # exactly match     
+#        $sub_tree->{exactly}->{$segment}  ||= {};
+#        if ($cd != 0) {
+#            __add_to_tree($sub_tree->{exactly}->{$segment}, $req, $rew)
+#        } else {
+#            __add_param_node($sub_tree->{exactly}->{$segment}, $req, $rew);
+#        } 
+#    } elsif ($ref) {
+#        # re
+#        $sub_tree->{re} ||= [];
+#        push @{$sub_tree->{re}}, [$segment, $cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew)];
+#    } else {
+#        # any
+#        $sub_tree->{any} ||= [];
+#        push @{$sub_tree->{any}}, [$cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew)];
+#    }
+#    
+#    return $tree;
+#}
 
 sub __add_param_node {
 	my $ret = shift;
