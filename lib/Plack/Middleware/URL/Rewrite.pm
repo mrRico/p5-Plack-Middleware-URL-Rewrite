@@ -40,14 +40,16 @@ sub _init {
         carp $@;
         return;
     }
+    $cnf->regexp_prepare;
     
     my $tree = {};
     for my $rule ($cnf->section) {
         my $data = $cnf->section($rule);
         my $desc = {};
+        $DB::signal = 1;
         for (keys %$data) {
         	next if (!$_ or /^_/ or Scalar::Util::blessed($_));
-            if (/^req\.url\.segments[(\d+)]$/) {
+            if (/^req\.url\.segments\[(\d+)\]$/) {
                 # описание сегмента ури
                 $desc->{req}->{url}->{segment}->[$1] = $data->{$_};
             } elsif ($_ eq 'req.url.segments.others') {
@@ -58,14 +60,14 @@ sub _init {
                 $desc->{rew}->{url}->{params_others} = 1;
             } elsif ($_ eq 'rew.url.segments.others') {
                 $desc->{rew}->{url}->{segments_others} = 1;
-            } elsif (/^req\.url\.params.(.+?)/) {
+            } elsif (/^req\.url\.params\.(.+?)/) {
                 $desc->{req}->{url}->{param}->{$1} = $data->{$_};
-            } elsif (/^rew\.url\.segments[(\d+)]/) {
+            } elsif (/^rew\.url\.segments\[(\d+)\]$/) {
                 my $i = $1;
-                if ($data->{$_} =~ /^req\.url\.segments[(\d+)]\.match\(\$(\d+)\)$/) {
+                if ($data->{$_} =~ /^req\.url\.segments\[(\d+)\]\.match\(\$(\d+)\)$/) {
                     my $segment_target = $1;
-                    my $match_target = $2;
-                    if (ref $desc->{req}->{url}->{segment}->[$segment_target] eq 'Regexp' and $match_target-1 > -1) {
+                    my $match_target = $2;                    
+                    if ($data->{'__req.url.segments['.$segment_target.']'} and ref $data->{'__req.url.segments['.$segment_target.']'}->[0] eq 'Regexp' and $match_target-1 > -1) {
                         # сегмент описан
                         $desc->{rew}->{url}->{segment}->[$i] = sub {
                             $_->{segments}->{$segment_target}->[$match_target-1] || '';
@@ -81,13 +83,13 @@ sub _init {
                     my $val = $data->{$_};
                     $desc->{rew}->{url}->{segment}->[$i] = $val eq '/' ? '' : $val;
                 }
-            } elsif (/^rew\.url\.params\.(.+?)/) {
+            } elsif (/^rew\.url\.params\.(.+?)$/) {
             	my $i = $1;
-            	if ($data->{$_} =~ /req\.url\.params\.(.+?)\.match\($(\d+)\)/) {
+            	if ($data->{$_} =~ /^req\.url\.params\.(.+?)\.match\($(\d+)\)$/) {
                     my $param_target = $1;
                     my $match_target = $2;
-                    if (ref $desc->{req}->{url}->{param}->{$param_target} eq 'Regexp' and $match_target-1 > -1) {
-                        # параметр описан
+                    if ($data->{'__req.url.params.'.$param_target} and ref $data->{'__req.url.params.'.$param_target}->[0] eq 'Regexp' and $match_target-1 > -1) {
+                        # параметр описан регуляркой
                         $desc->{rew}->{url}->{param}->{$i} = sub {
                             $_->{params}->{$param_target}->[$match_target-1] || '';
                         };
@@ -117,54 +119,59 @@ sub _init {
         	$desc->{req}->{url}->{segment}->[0] ||= '';
         	$desc->{rew}->{url}->{segment}->[0] ||= '';
         	
-        	my $rewriter = sub {
-        		
-        	};
-	        __add_to_tree($tree, $desc->{req}->{url}, $desc->{rew}->{url}); 
+        	# для варнигов
+        	$desc->{rew}->{url}->{section} = $rule;
+        	
+        	# по умолчанию нет описаний параметров
+        	$desc->{req}->{url}->{param} ||= {};
+        	
+        	# наличие нескольких деревьев в такой логике всегда оправдано больше, чем делать одно большое
+	        my $segment_target = __make_segments_tree($self->{segments_tree} ||= {}, $desc->{req}->{url});
+	        if ($segment_target) {
+    	        my $rewrite_target = __make_params_tree($self->{params_tree}->{"$segment_target"} ||= {}, $desc->{req}->{url});
+	            if ($rewrite_target) {
+	                __make_rewrite_rules($self->{rewrite_rules}->{"$rewrite_target"} ||= {}, $desc->{rew}->{url});
+	            }
+	        }
         };
     }
     
-    if ($tree->{uri_others_depths}) {
+    if ($self->{segments_tree}->{segments_others}) {
         # чтобы не тратить потом время на сортировку ключей для uri без определённой глубины
-        @{$tree->{uri_others_depths}} = sort {$b <=> $a} @{$tree->{uri_others_depths}};
+        @{$self->{segments_tree}->{segments_others}->{depths}} = sort {$b <=> $a} @{$self->{segments_tree}->{segments_others}->{depths}};
     }
     
-    $self->{rules} = $tree;
+    $DB::signal = 1;
+    
     $self->{modified} = $modified;
     $self->{has_rule} = keys %$tree ? 1 : 0;
     
     return;
 }
 
-sub __add_to_tree {
+sub __make_segments_tree {
 	my $tree = shift;
-	my $req  = shift;
-	my $rew  = shift;
+	my $segments  = shift;
 	
-	$tree = $tree->{$req->{segments_others} ? 'uri_with_others' : 'uri'} ||= {};
-	my $depth = $#{$req->{segment}};
+	$tree = $tree->{$segments->{segments_others} ? 'segments_others' : 'segments'} ||= {};
+	my $depth = $#{$segments->{segment}};
 	
 	# чтобы не тратить потом время на сортировку ключей для uri без определённой глубины
-	if ($req->{segments_others}) {
-	   $tree->{uri_others_depths} ||= [];
-	   push @{$tree->{uri_others_depths}}, $depth;
+	if ($segments->{segments_others}) {
+	   $tree->{depths} ||= [];
+	   push @{$tree->{depths}}, $depth;
 	}  
 	
 	# глубина поиска имеет значение только при первом выборе саб-дерева
 	$tree = $tree->{uri_depth}->{$depth} ||= {}; 
     
-    
-    $tree = __add_segment_node($tree, $req->{segment});
-    # tree is a hash
-    
-    #$tree = __add_segment_node($tree);
-
-    #$tree = __add_rewrite_sub($tree);
-            
-    return;
+    # рекурсивно
+    $tree = __add_segments_tree($tree, $segments->{segment});
+        
+    return $tree;
 }
 
-sub __add_segment_node {
+sub __add_segments_tree {
     my $tree        = shift;
     my $segments    = shift;
     
@@ -178,18 +185,85 @@ sub __add_segment_node {
     my $ref = ref $segment;
     if (defined $segment and not $ref) {
         # exactly match     
-        $tree = __add_segment_node($tree->{exactly}->{$segment}  ||= {}, $segments);
-    } elsif ($ref) {
+        $tree = __add_segments_tree($tree->{exactly}->{$segment}  ||= {}, $segments);
+    } elsif ($ref eq 'Regexp') {
         # re
         $tree->{re} ||= [];
-        push @{$tree->{re}}, __add_segment_node({}, $segments);
-        $tree = $tree->{re}->[-1];
-    } else {
+        my $sub_tree = {};
+        my $ret = __add_segments_tree($sub_tree, $segments);
+        push @{$tree->{re}}, [$segment, $sub_tree];
+        $tree = $ret;
+    } elsif (not $ref) {
         # any
-        $tree = __add_segment_node($tree->{any} ||= {}, $segments);
+        $tree = __add_segments_tree($tree->{any} ||= {}, $segments);
+    } else {
+        carp "I don't know what I can do with segment $segment";
+        return;
     }
     
     return $tree;
+}
+
+sub __make_params_tree {
+    my $tree        = shift;
+    my $params      = shift;
+    
+    if ($params->{params_others}) {
+        $tree = $tree->{params_others} ||= {};
+    } elsif (keys %{$params->{param}}) {
+        $tree = $tree->{params} ||= {};
+    } else {
+        $tree = $tree->{without_params} ||= {};
+    }
+    
+    # TODO: стоит ли делать дерево, или можно написать сабу. которая всё првоерит?
+    $tree = __add_params_tree($tree, [sort keys %{$tree->{param}}], $tree->{param});
+    
+    return $tree;
+}
+
+sub __add_params_tree {
+    my $tree         = shift;
+    my $names_params = shift;
+    my $hash         = shift;
+    
+    return $tree unless defined $names_params->[0];  
+    
+    my $p_name = shift @$names_params;
+    my $p_val  = delete $hash->{$p_name};
+    my $ref    = ref $p_val;
+    unless ($ref) {
+        # exactly match
+        $tree = __add_params_tree($tree->{exactly}->{$p_name.'&'.$p_val} ||= {}, $names_params, $hash);
+    } elsif ($ref eq 'Regexp') {
+        # re
+        $tree->{re}->{$p_name} ||= [];
+        my $sub_tree = {};
+        my $ret = __add_params_tree($sub_tree, $names_params, $hash);
+        push @{$tree->{re}->{$p_name}}, [$p_val, $sub_tree];
+        $tree = $ret;
+    } else {
+        carp "I don't know what I can do with param $p_name = $p_val";
+        return;        
+    }
+    
+    return $tree;
+}
+
+sub __make_rewrite_rules {
+    my $token = shift;
+    my $rew_rule = shift;
+    
+    if (keys %$token) {
+        carp "'".$rew_rule->{section}."' override some rule";
+    }
+    
+    $token->{_sub} = sub {
+        
+        
+    };
+    
+    return;
 }
 
 
@@ -226,16 +300,12 @@ sub __add_segment_node {
 #}
 
 sub __add_param_node {
-	my $ret = shift;
-	my $req = shift;
-	my $rew = shift;
-	
-	my $req_params_sub = sub {
-		my $url = shift;
-	};
+    my $tree        = shift;
+    my $params      = shift;
 	
 	
 	
+	return $tree; 
 }
 
 sub _make_rewrite {

@@ -1,0 +1,15 @@
+# description /foo/123456Jhon/bar/?baz=2011
+
+[sdfgdfgdgdfg]
+req.url.segments[0]     = foo
+req.url.segments[1]     =~ /^(\d{0,6})(\w+)$/
+req.url.segments[4]     = zzed
+req.url.segments.others = 1
+req.url.params.baz      =~ /^(\d{4})/
+
+rew.url.segments[0]     = foo
+rew.url.segments[1]     = req.url.segments[1].match($1)
+rew.url.segments[2]     = req.url.segments[1].match($2)
+rew.url.segments.others = 1
+rew.url.params.baz      = req.url.params.baz.match($1)  
+rew.url.params.others   = 1
