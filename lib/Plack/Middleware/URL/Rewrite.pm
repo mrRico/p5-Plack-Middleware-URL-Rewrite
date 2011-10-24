@@ -42,34 +42,38 @@ sub _init {
     }
     $cnf->regexp_prepare;
     
-    my $tree = {};
+    # skip old values
+    $self->{segments_tree} = {};
+    $self->{params_tree}   = {};
+    $self->{rewrite_rules} = {}; 
+
     for my $rule ($cnf->section) {
         my $data = $cnf->section($rule);
         my $desc = {};
         $DB::signal = 1;
         for (keys %$data) {
         	next if (!$_ or /^_/ or Scalar::Util::blessed($_));
-            if (/^req\.url\.segments\[(\d+)\]$/) {
+            if (/^req\.segments\[(\d+)\]$/) {
                 # описание сегмента ури
-                $desc->{req}->{url}->{segment}->[$1] = $data->{$_};
-            } elsif ($_ eq 'req.url.segments.others') {
-                $desc->{req}->{url}->{segments_others} = $data->{$_};
-            } elsif ($_ eq 'req.url.params.others') {
-                $desc->{req}->{url}->{params_others} = $data->{$_};
-            } elsif ($_ eq 'rew.url.params.others') {
-                $desc->{rew}->{url}->{params_others} = 1;
-            } elsif ($_ eq 'rew.url.segments.others') {
-                $desc->{rew}->{url}->{segments_others} = 1;
-            } elsif (/^req\.url\.params\.(.+?)/) {
-                $desc->{req}->{url}->{param}->{$1} = $data->{$_};
-            } elsif (/^rew\.url\.segments\[(\d+)\]$/) {
+                $desc->{req}->{segment}->[$1] = $data->{$_};
+            } elsif ($_ eq 'req.segments.others') {
+                $desc->{req}->{segments_others} = $data->{$_};
+            } elsif ($_ eq 'req.params.others') {
+                $desc->{req}->{params_others} = $data->{$_};
+            } elsif ($_ eq 'rew.params.others') {
+                $desc->{rew}->{params_others} = 1;
+            } elsif ($_ eq 'rew.segments.others') {
+                $desc->{rew}->{segments_others} = 1;
+            } elsif (/^req\.params\.(.+?)$/) {
+                $desc->{req}->{param}->{$1} = $data->{$_};
+            } elsif (/^rew\.segments\[(\d+)\]$/) {
                 my $i = $1;
-                if ($data->{$_} =~ /^req\.url\.segments\[(\d+)\]\.match\(\$(\d+)\)$/) {
+                if ($data->{$_} =~ /^req\.segments\[(\d+)\]\.match\(\$(\d+)\)$/) {
                     my $segment_target = $1;
                     my $match_target = $2;                    
-                    if ($data->{'__req.url.segments['.$segment_target.']'} and ref $data->{'__req.url.segments['.$segment_target.']'}->[0] eq 'Regexp' and $match_target-1 > -1) {
+                    if ($data->{'__req.segments['.$segment_target.']'} and ref $data->{'__req.segments['.$segment_target.']'}->[0] eq 'Regexp' and $match_target-1 > -1) {
                         # сегмент описан
-                        $desc->{rew}->{url}->{segment}->[$i] = sub {
+                        $desc->{rew}->{segment}->[$i] = sub {
                             $_->{segments}->{$segment_target}->[$match_target-1] || '';
                         };
                     } else {
@@ -81,16 +85,16 @@ sub _init {
                 } else {
                     # simple value for segment
                     my $val = $data->{$_};
-                    $desc->{rew}->{url}->{segment}->[$i] = $val eq '/' ? '' : $val;
+                    $desc->{rew}->{segment}->[$i] = $val eq '/' ? '' : $val;
                 }
-            } elsif (/^rew\.url\.params\.(.+?)$/) {
+            } elsif (/^rew\.params\.(.+?)$/) {
             	my $i = $1;
-            	if ($data->{$_} =~ /^req\.url\.params\.(.+?)\.match\($(\d+)\)$/) {
+            	if ($data->{$_} =~ /^req\.params\.(.+?)\.match\($(\d+)\)$/) {
                     my $param_target = $1;
                     my $match_target = $2;
-                    if ($data->{'__req.url.params.'.$param_target} and ref $data->{'__req.url.params.'.$param_target}->[0] eq 'Regexp' and $match_target-1 > -1) {
+                    if ($data->{'__req.params.'.$param_target} and ref $data->{'__req.params.'.$param_target}->[0] eq 'Regexp' and $match_target-1 > -1) {
                         # параметр описан регуляркой
-                        $desc->{rew}->{url}->{param}->{$i} = sub {
+                        $desc->{rew}->{param}->{$i} = sub {
                             $_->{params}->{$param_target}->[$match_target-1] || '';
                         };
                     } else {
@@ -102,35 +106,35 @@ sub _init {
                 } else {
                     # simple value for param
                     my $val = $data->{$_};
-                    $desc->{rew}->{url}->{param}->{$i} = $val;
+                    $desc->{rew}->{param}->{$i} = $val;
                 }
             }
         }
         
         if (keys %$desc) {
         	# set default
-        	$desc->{req}->{url}->{segments_others} = 0 unless defined $desc->{req}->{url}->{segments_others}; 
-        	$desc->{req}->{url}->{params_others} ||= 1; 
+        	$desc->{req}->{segments_others} = 0 unless defined $desc->{req}->{segments_others}; 
+        	$desc->{req}->{params_others} ||= 1; 
         	
-        	$desc->{rew}->{url}->{segments_others} = 0 unless defined $desc->{rew}->{url}->{segments_others};
-        	$desc->{rew}->{url}->{params_others} ||=1;
+        	$desc->{rew}->{segments_others} = 0 unless defined $desc->{rew}->{segments_others};
+        	$desc->{rew}->{params_others} ||=1;
         	
         	# chek root
-        	$desc->{req}->{url}->{segment}->[0] ||= '';
-        	$desc->{rew}->{url}->{segment}->[0] ||= '';
+        	$desc->{req}->{segment}->[0] ||= '';
+        	$desc->{rew}->{segment}->[0] ||= '';
         	
         	# для варнигов
-        	$desc->{rew}->{url}->{section} = $rule;
+        	$desc->{rew}->{section} = $rule;
         	
         	# по умолчанию нет описаний параметров
-        	$desc->{req}->{url}->{param} ||= {};
+        	$desc->{req}->{param} ||= {};
         	
         	# наличие нескольких деревьев в такой логике всегда оправдано больше, чем делать одно большое
-	        my $segment_target = __make_segments_tree($self->{segments_tree} ||= {}, $desc->{req}->{url});
+	        my $segment_target = __make_segments_tree($self->{segments_tree}, $desc->{req});
 	        if ($segment_target) {
-    	        my $rewrite_target = __make_params_tree($self->{params_tree}->{"$segment_target"} ||= {}, $desc->{req}->{url});
+    	        my $rewrite_target = __make_params_tree($self->{params_tree}->{"$segment_target"} ||= {}, $desc->{req});
 	            if ($rewrite_target) {
-	                __make_rewrite_rules($self->{rewrite_rules}->{"$rewrite_target"} ||= {}, $desc->{rew}->{url});
+	                __make_rewrite_rules($self->{rewrite_rules}->{"$rewrite_target"} ||= {}, $desc->{rew}, $self->debug);
 	            }
 	        }
         };
@@ -144,7 +148,7 @@ sub _init {
     $DB::signal = 1;
     
     $self->{modified} = $modified;
-    $self->{has_rule} = keys %$tree ? 1 : 0;
+    $self->{has_rule} = keys %{$self->{segments_tree}} ? 1 : 0;
     
     return;
 }
@@ -215,9 +219,9 @@ sub __make_params_tree {
     } else {
         $tree = $tree->{without_params} ||= {};
     }
-    
+    $DB::signal = 1;
     # TODO: стоит ли делать дерево, или можно написать сабу. которая всё првоерит?
-    $tree = __add_params_tree($tree, [sort keys %{$tree->{param}}], $tree->{param});
+    $tree = __add_params_tree($tree, [sort keys %{$params->{param}}], $params->{param});
     
     return $tree;
 }
@@ -355,14 +359,14 @@ __END__
 # description /foo/123456Jhon/bar/?baz=2011
 
 [my rewrite bla-bla /foo/123456Jhon/bar/?baz=2011trach&daz=1 => /foo/123456/Jhon/bar/?baz=2011&daz=1 ]
-req.url.segments[0]     = foo
-req.url.segments[1]     =~ /^(\d{0,6})(\w+)$/
-req.url.segments.others = 1
-req.url.params.baz      =~ /^(\d{4})/
+req.segments[0]     = foo
+req.segments[1]     =~ /^(\d{0,6})(\w+)$/
+req.segments.others = 1
+req.params.baz      =~ /^(\d{4})/
 
-rew.url.segments[0]     = foo
-rew.url.segments[1]     = req.url.segments[1].match($1)
-rew.url.segments[2]     = req.url.segments[1].match($2)
-rew.url.segments.others = 1
-rew.url.params.baz      = req.url.params.baz.match($1)  
-rew.url.params.others   = 1
+rew.segments[0]     = foo
+rew.segments[1]     = req.segments[1].match($1)
+rew.segments[2]     = req.segments[1].match($2)
+rew.segments.others = 1
+rew.params.baz      = req.params.baz.match($1)  
+rew.params.others   = 1
