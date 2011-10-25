@@ -264,8 +264,8 @@ sub __make_rewrite_rules {
         my $found = shift;
 
         my @rew_segments = map {ref $_ eq 'CODE' ? $_->($found) : $_} @{$rew_rule->{segment}};
-        if ($rew_rule->{segments_others}) {
-            push @rew_segments, @{$rew_rule->{segments_others}};
+        if ($rew_rule->{segments_others} and length $found->{segments}->{others}->[0]) {
+            push @rew_segments, @{$found->{segments}->{others}};
         }
 
         my @param = ();
@@ -302,30 +302,37 @@ sub _make_rewrite {
     my $depth = $#segment;
     
     my @find = ();    
-    my $segments_tree; my $segment_others;
-    if ($self->{segments_tree}->{segments} and $self->{segments_tree}->{segments}->{uri_depth}->{$depth}) {
-       $segments_tree = $self->{segments_tree}->{segments}->{uri_depth}->{$depth};
-    } 
-#    elsif ($self->{segments_tree}->{segments_others}) {
-#        my $i = 0;
-#        my @cand = @{$self->{segments_tree}->{segments_others}->{depths}};
-#        for (@cand) {
-#            if ($depth >= $_) {                
-#                $segment_others = \@cand[$i..$#cand];
-#                last;
-#            }
-#            $i++;
-#        }
-#    }
-
-    # если нет реврайтов для данной глубины
-    return if (not $segments_tree and not $segment_others);
     
-    my ($params_key, $segments_find) = __search_from_segments_fix_depth([@segment], $segments_tree);
-    return unless $params_key;
+    my ($key, $segments_found);
+    
+    # ищем реврайты среди описаний с точным указанием сегментов
+    if ($self->{segments_tree}->{segments}->{uri_depth}->{$depth}) {
+        ($key, $segments_found) = __search_from_segments_fix_depth([@segment], $self->{segments_tree}->{segments}->{uri_depth}->{$depth});
+    }
+    # ищем реврайты среди описаний со свободным окончанием в uri
+    if (not $key and $self->{segments_tree}->{segments_others}) {
+        # список глубин отсортирован в порядке убывания, поэтому поиск начнём с "самых описанных uri"
+        for (@{$self->{segments_tree}->{segments_others}->{depths}}) {
+            if ($depth >= $_) {
+                ($key, $segments_found) = __search_from_segments_with_others([@segment], $self->{segments_tree}->{segments_others}->{uri_depth}->{$_});
+                last if $key;
+            }
+        }
+    };
+    
+    return unless ($key and $self->{params_tree}->{"$key"}); 
+    
+    my $params_found;
+    # собёрм параметры в хэш
+    my $all_params = {};
+    for ($uri->query_param) {
+        my @param = $uri->query_param($_);
+        $all_params->{$_} = [@param];
+    }
+    # проверяем параметры
+    __search_from_params($all_params, $self->{params_tree}->{"$key"});
     
     
-    1;
         
     
         
@@ -362,9 +369,13 @@ sub __search_from_segments_fix_depth {
     my $i               = shift;
     $i = -1 unless defined $i;
     $i++;
+    my $with_others     = shift;
     
-    # найден ключь матча
-    return $segments_tree if ($segments_tree and not keys %$segments_tree and not defined $segments->[0]); 
+    # найден ключ матча
+    if ($segments_tree and not keys %$segments_tree and (not defined $segments->[0] or $with_others)) {
+        $find->{others} = $segments;
+        return $segments_tree;
+    };
     
     # не подошла ветка
     return unless ($segments_tree and defined $segments->[0]);
@@ -373,7 +384,7 @@ sub __search_from_segments_fix_depth {
     
     my $segment = shift @$segments; 
     if ($segments_tree->{exactly} and $segments_tree->{exactly}->{$segment}) {
-        $key = __search_from_segments_fix_depth($segments, $segments_tree->{exactly}->{$segment}, $find, $i);
+        $key = __search_from_segments_fix_depth($segments, $segments_tree->{exactly}->{$segment}, $find, $i, $with_others);
         $find->{$i} = [$segment] if $key;
     }
     
@@ -381,7 +392,7 @@ sub __search_from_segments_fix_depth {
         for (@{$segments_tree->{re}}) {
             my @match = $segment =~ $_->[0];
             if (@match) {
-                $key = __search_from_segments_fix_depth($segments, $_->[1], $find, $i);
+                $key = __search_from_segments_fix_depth($segments, $_->[1], $find, $i, $with_others);
                 if ($key) {
                     $find->{$i} = [$segment, @match];
                     last;
@@ -391,11 +402,15 @@ sub __search_from_segments_fix_depth {
     }
     
     if (not $key and $segments_tree->{any}) {
-        $key = __search_from_segments_fix_depth($segments, $segments_tree->{any}, $find, $i);
+        $key = __search_from_segments_fix_depth($segments, $segments_tree->{any}, $find, $i, $with_others);
         $find->{$i} = [$segment] if $key;
     }
     
-    return $key ? ($key, $find) : undef;
+    return ($key ? ( wantarray ? ($key, $find) : $key) : undef);
+}
+
+sub __search_from_segments_with_others {
+    __search_from_segments_fix_depth(@_, {}, -1, 'with_others')
 }
 
 
