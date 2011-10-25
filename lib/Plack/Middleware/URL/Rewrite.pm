@@ -219,7 +219,7 @@ sub __make_params_tree {
         $tree = $tree->{without_params} ||= {};
     }
 
-    $tree = __add_params_tree($tree, [sort keys %{$params->{param}}], $params->{param});
+    $tree = __add_params_tree($tree, [sort keys %{$params->{param} || {}}], $params->{param});
     
     return $tree;
 }
@@ -229,7 +229,11 @@ sub __add_params_tree {
     my $names_params = shift;
     my $hash         = shift;
     
-    return $tree unless defined $names_params->[0];  
+    return $tree unless defined $names_params->[0];
+#    unless (defined $names_params->[0]) {
+#        $tree->{"$tree"} = {};
+#        return $tree->{"$tree"};
+#    };
     
     my $p_name = shift @$names_params;
     my $p_val  = delete $hash->{$p_name};
@@ -303,35 +307,44 @@ sub _make_rewrite {
     
     my @find = ();    
     
-    my ($key, $segments_found);
+    my ($s_key, $segments_found);
     
     # ищем реврайты среди описаний с точным указанием сегментов
     if ($self->{segments_tree}->{segments}->{uri_depth}->{$depth}) {
-        ($key, $segments_found) = __search_from_segments_fix_depth([@segment], $self->{segments_tree}->{segments}->{uri_depth}->{$depth});
+        ($s_key, $segments_found) = __search_from_segments_fix_depth([@segment], $self->{segments_tree}->{segments}->{uri_depth}->{$depth});
     }
     # ищем реврайты среди описаний со свободным окончанием в uri
-    if (not $key and $self->{segments_tree}->{segments_others}) {
+    if (not $s_key and $self->{segments_tree}->{segments_others}) {
         # список глубин отсортирован в порядке убывания, поэтому поиск начнём с "самых описанных uri"
         for (@{$self->{segments_tree}->{segments_others}->{depths}}) {
             if ($depth >= $_) {
-                ($key, $segments_found) = __search_from_segments_with_others([@segment], $self->{segments_tree}->{segments_others}->{uri_depth}->{$_});
-                last if $key;
+                ($s_key, $segments_found) = __search_from_segments_with_others([@segment], $self->{segments_tree}->{segments_others}->{uri_depth}->{$_});
+                last if $s_key;
             }
         }
     };
     
-    return unless ($key and $self->{params_tree}->{"$key"}); 
+    return unless ($s_key and $self->{params_tree}->{"$s_key"}); 
     
-    my $params_found;
+    my ($p_key, $params_found);
     # собёрм параметры в хэш
-    my $all_params = {};
+    my $all_params;
     for ($uri->query_param) {
         my @param = $uri->query_param($_);
         $all_params->{$_} = [@param];
     }
     # проверяем параметры
-    __search_from_params($all_params, $self->{params_tree}->{"$key"});
-    
+    unless ($all_params) {
+        $p_key = $self->{params_tree}->{"$s_key"}->{without_params}->{$s_key};
+        $params_found = {} if $p_key;
+    }
+    if (not $p_key and $all_params) {
+        my @all_params = sort keys %$all_params;
+        ($p_key, $params_found) = __search_from_params($all_params, $self->{params_tree}->{"$s_key"}->{params}, [@all_params]);
+        unless ($p_key) {
+            ($p_key, $params_found) = __search_from_params($all_params, $self->{params_tree}->{"$s_key"}->{params_others}, [@all_params]);
+        }
+    }
     
         
     
@@ -358,6 +371,21 @@ sub _make_rewrite {
 #    } elsif ($self->debug) {
 #        carp __PACKAGE__.": not found rewrite rule fot '$uri'";
 #    }
+    
+    return;
+}
+
+sub __search_from_params {
+    my $param_hash  = shift;
+    my $tree        = shift;
+    my $order_param = shift;
+    
+    unless (ref $order_param) {
+        
+        
+    } else {
+        
+    }
     
     return;
 }
