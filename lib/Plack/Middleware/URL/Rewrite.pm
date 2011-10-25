@@ -49,8 +49,7 @@ sub _init {
 
     for my $rule ($cnf->section) {
         my $data = $cnf->section($rule);
-        my $desc = {};
-        $DB::signal = 1;
+        my $desc = {};        
         for (keys %$data) {
         	next if (!$_ or /^_/ or Scalar::Util::blessed($_));
             if (/^req\.segments\[(\d+)\]$/) {
@@ -74,7 +73,7 @@ sub _init {
                     if ($data->{'__req.segments['.$segment_target.']'} and ref $data->{'__req.segments['.$segment_target.']'}->[0] eq 'Regexp' and $match_target-1 > -1) {
                         # сегмент описан
                         $desc->{rew}->{segment}->[$i] = sub {
-                            $_->{segments}->{$segment_target}->[$match_target-1] || '';
+                            $_[0]->{segments}->{$segment_target}->[$match_target] || '';
                         };
                     } else {
                         # ссылка на сегмент, который не был описан или был описан не регекспом
@@ -89,13 +88,13 @@ sub _init {
                 }
             } elsif (/^rew\.params\.(.+?)$/) {
             	my $i = $1;
-            	if ($data->{$_} =~ /^req\.params\.(.+?)\.match\($(\d+)\)$/) {
+            	if ($data->{$_} =~ /^req\.params\.(.+?)\.match\(\$(\d+)\)$/) {
                     my $param_target = $1;
                     my $match_target = $2;
                     if ($data->{'__req.params.'.$param_target} and ref $data->{'__req.params.'.$param_target}->[0] eq 'Regexp' and $match_target-1 > -1) {
                         # параметр описан регуляркой
                         $desc->{rew}->{param}->{$i} = sub {
-                            $_->{params}->{$param_target}->[$match_target-1] || '';
+                            $_[0]->{params}->{$param_target}->[$match_target] || '';
                         };
                     } else {
                         # ссылка на сегмент, который не был описан или был описан не регекспом
@@ -134,7 +133,7 @@ sub _init {
 	        if ($segment_target) {
     	        my $rewrite_target = __make_params_tree($self->{params_tree}->{"$segment_target"} ||= {}, $desc->{req});
 	            if ($rewrite_target) {
-	                __make_rewrite_rules($self->{rewrite_rules}->{"$rewrite_target"} ||= {}, $desc->{rew}, $self->debug);
+	                __make_rewrite_rules($self->{rewrite_rules}->{"$rewrite_target"} ||= {}, $desc->{rew});
 	            }
 	        }
         };
@@ -145,7 +144,7 @@ sub _init {
         @{$self->{segments_tree}->{segments_others}->{depths}} = sort {$b <=> $a} @{$self->{segments_tree}->{segments_others}->{depths}};
     }
     
-    $DB::signal = 1;
+    #$DB::signal = 1;
     
     $self->{modified} = $modified;
     $self->{has_rule} = keys %{$self->{segments_tree}} ? 1 : 0;
@@ -219,8 +218,7 @@ sub __make_params_tree {
     } else {
         $tree = $tree->{without_params} ||= {};
     }
-    $DB::signal = 1;
-    # TODO: стоит ли делать дерево, или можно написать сабу. которая всё првоерит?
+
     $tree = __add_params_tree($tree, [sort keys %{$params->{param}}], $params->{param});
     
     return $tree;
@@ -244,7 +242,7 @@ sub __add_params_tree {
         $tree->{re}->{$p_name} ||= [];
         my $sub_tree = {};
         my $ret = __add_params_tree($sub_tree, $names_params, $hash);
-        push @{$tree->{re}->{$p_name}}, [$p_val, $sub_tree];
+        push @{$tree->{re}->{$p_name}}, [$p_val, keys %$sub_tree ? $sub_tree : undef];
         $tree = $ret;
     } else {
         carp "I don't know what I can do with param $p_name = $p_val";
@@ -255,61 +253,39 @@ sub __add_params_tree {
 }
 
 sub __make_rewrite_rules {
-    my $token = shift;
+    my $token    = shift;
     my $rew_rule = shift;
     
-    if (keys %$token) {
-        carp "'".$rew_rule->{section}."' override some rule";
-    }
+    carp "'".$rew_rule->{section}."' override some rule" if $token->{_sub};
     
     $token->{_sub} = sub {
-        
-        
+        $DB::signal = 1;
+        my $url   = shift;
+        my $found = shift;
+
+        my @rew_segments = map {ref $_ eq 'CODE' ? $_->($found) : $_} @{$rew_rule->{segment}};
+        if ($rew_rule->{segments_others}) {
+            push @rew_segments, @{$rew_rule->{segments_others}};
+        }
+
+        my @param = ();
+        if ($rew_rule->{params_others}) {
+           push @param, @{$rew_rule->{params_others}}
+        }
+        if ($rew_rule->{param}) {
+            for (keys %{$rew_rule->{param}}) {
+                push @param, $_, ref $rew_rule->{param}->{$_} eq 'CODE' ? $rew_rule->{param}->{$_}->($found) : $rew_rule->{param}->{$_}   
+            }
+        }
+
+        my $ret = URI->new;
+        $ret->path_segments(@rew_segments);
+        $ret->query_form(@param) if @param;
+
+        return wantarray ? ($ret, $rew_rule->{section}) : $ret;
     };
     
     return;
-}
-
-
-#sub __add_segment_node {
-#    my $tree = shift;
-#    my $req  = shift;
-#    my $rew  = shift;
-#    
-#    # cur depth
-#    my $cd = $#{$req->{segment}};
-#    my $sub_tree = $tree->{depth}->{$cd} ||= {};
-#    my $segment = shift @{$req->{segment}};
-#    my $ref = ref $segment;
-#    # TODO оптимизация условия
-#    if (defined $segment and not $ref) {
-#        # exactly match     
-#        $sub_tree->{exactly}->{$segment}  ||= {};
-#        if ($cd != 0) {
-#            __add_to_tree($sub_tree->{exactly}->{$segment}, $req, $rew)
-#        } else {
-#            __add_param_node($sub_tree->{exactly}->{$segment}, $req, $rew);
-#        } 
-#    } elsif ($ref) {
-#        # re
-#        $sub_tree->{re} ||= [];
-#        push @{$sub_tree->{re}}, [$segment, $cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew)];
-#    } else {
-#        # any
-#        $sub_tree->{any} ||= [];
-#        push @{$sub_tree->{any}}, [$cd != 0 ? __add_to_tree({}, $req, $rew) : __add_check_node($req, $rew)];
-#    }
-#    
-#    return $tree;
-#}
-
-sub __add_param_node {
-    my $tree        = shift;
-    my $params      = shift;
-	
-	
-	
-	return $tree; 
 }
 
 sub _make_rewrite {
@@ -317,42 +293,118 @@ sub _make_rewrite {
     my $env  = shift;
     
     my $uri = URI->new($env->{REQUEST_URI});
+    
     #my @segment = map {length $_ ? $_ : '/'} $uri->path_segments;
     #shift @segment;# TODO (? remove this)
+    
     my @segment = $uri->path_segments;
+    shift @segment;
+    my $depth = $#segment;
     
-    # не найдено дерево для данного числа сегментов
-    my $tree = $self->{rules}->{depth}->{scalar @segment}; 
-    return unless $tree; 
+    my @find = ();    
+    my $segments_tree; my $segment_others;
+    if ($self->{segments_tree}->{segments} and $self->{segments_tree}->{segments}->{uri_depth}->{$depth}) {
+       $segments_tree = $self->{segments_tree}->{segments}->{uri_depth}->{$depth};
+    } 
+#    elsif ($self->{segments_tree}->{segments_others}) {
+#        my $i = 0;
+#        my @cand = @{$self->{segments_tree}->{segments_others}->{depths}};
+#        for (@cand) {
+#            if ($depth >= $_) {                
+#                $segment_others = \@cand[$i..$#cand];
+#                last;
+#            }
+#            $i++;
+#        }
+#    }
+
+    # если нет реврайтов для данной глубины
+    return if (not $segments_tree and not $segment_others);
     
-    # собёрм параметры в хэш
-    my $params = {};
-    for ($uri->query_param) {
-        my @param = $uri->query_param($_);
-        $params->{$_} = [@param];
-    }
+    my ($params_key, $segments_find) = __search_from_segments_fix_depth([@segment], $segments_tree);
+    return unless $params_key;
     
-    my $rewrite_url = __make_rewrite($tree, $params, @segment);
     
-    if ($rewrite_url) {
-        # TODO: check default (path can't be null)
-        $env->{REQUEST_URI}     = "$rewrite_url";
-        $env->{PATH_INFO}       = $rewrite_url->path;
-        $env->{QUERY_STRING}    = $rewrite_url->query || '';
-        carp __PACKAGE__.": rewrite '$uri' to '$rewrite_url'" if $self->debug;
-    } elsif ($self->debug) {
-        carp __PACKAGE__.": not found rewrite rule fot '$uri'";
-    }
+    1;
+        
+    
+        
+#    # не найдено дерево для данного числа сегментов
+#    my $tree = $self->{rules}->{depth}->{scalar @segment}; 
+#    return unless $tree; 
+#    
+#    # собёрм параметры в хэш
+#    my $params = {};
+#    for ($uri->query_param) {
+#        my @param = $uri->query_param($_);
+#        $params->{$_} = [@param];
+#    }
+#    
+#    my $rewrite_url = __make_rewrite($tree, $params, @segment);
+#    
+#    if ($rewrite_url) {
+#        # TODO: check default (path can't be null)
+#        $env->{REQUEST_URI}     = "$rewrite_url";
+#        $env->{PATH_INFO}       = $rewrite_url->path;
+#        $env->{QUERY_STRING}    = $rewrite_url->query || '';
+#        carp __PACKAGE__.": rewrite '$uri' to '$rewrite_url'" if $self->debug;
+#    } elsif ($self->debug) {
+#        carp __PACKAGE__.": not found rewrite rule fot '$uri'";
+#    }
     
     return;
 }
 
-sub __make_rewrite {
-    my ($tree, $params, @segment) = @_;
+sub __search_from_segments_fix_depth {
+    my $segments        = shift;
+    my $segments_tree   = shift;   
+    my $find            = shift || {};
+    my $i               = shift;
+    $i = -1 unless defined $i;
+    $i++;
     
+    # найден ключь матча
+    return $segments_tree if ($segments_tree and not keys %$segments_tree and not defined $segments->[0]); 
     
-    return;
+    # не подошла ветка
+    return unless ($segments_tree and defined $segments->[0]);
+    
+    my $key = undef;
+    
+    my $segment = shift @$segments; 
+    if ($segments_tree->{exactly} and $segments_tree->{exactly}->{$segment}) {
+        $key = __search_from_segments_fix_depth($segments, $segments_tree->{exactly}->{$segment}, $find, $i);
+        $find->{$i} = [$segment] if $key;
+    }
+    
+    if (not $key and $segments_tree->{re}) {
+        for (@{$segments_tree->{re}}) {
+            my @match = $segment =~ $_->[0];
+            if (@match) {
+                $key = __search_from_segments_fix_depth($segments, $_->[1], $find, $i);
+                if ($key) {
+                    $find->{$i} = [$segment, @match];
+                    last;
+                }
+            }
+        }
+    }
+    
+    if (not $key and $segments_tree->{any}) {
+        $key = __search_from_segments_fix_depth($segments, $segments_tree->{any}, $find, $i);
+        $find->{$i} = [$segment] if $key;
+    }
+    
+    return $key ? ($key, $find) : undef;
 }
+
+
+#sub __make_rewrite {
+#    my ($tree, $params, @segment) = @_;
+#    
+#    
+#    return;
+#}
 
 1;
 __END__

@@ -2,14 +2,14 @@
 
 [rewrite]
 req.segments[0]     = foo
-req.segments[1]     =~ /^(\d{0,6})(\w+)$/
+req.segments[1]     =~ /^(\d{0,2})\d+$/
 req.segments[4]     = zzed
-req.segments.others = 1
-req.params.baz      =~ /^(\d{4})/
+#req.segments.others = 1
+#req.params.baz      =~ /^(\d{4})/
 
 rew.segments[0]     = foo
 rew.segments[1]     = req.segments[1].match($1)
 rew.segments[2]     = req.segments[1].match($2)
-rew.segments.others = 1
-rew.params.baz      = req.params.baz.match($1)  
-rew.params.others   = 1
+#rew.segments.others = 1
+#rew.params.baz      = req.params.baz.match($1)  
+#rew.params.others   = 1
