@@ -267,13 +267,19 @@ sub __make_rewrite_rules {
         my $found = shift;
 
         my @rew_segments = map {ref $_ eq 'CODE' ? $_->($found) : $_} @{$rew_rule->{segment}};
-        if ($rew_rule->{segments_others} and length $found->{segments}->{others}->[0]) {
-            push @rew_segments, @{$found->{segments}->{others}};
+        if ($rew_rule->{segments_others} and $found->{segments}->{'&others'}) {
+            push @rew_segments, @{$found->{segments}->{'&others'}};
         }
-
+        
+        if (@rew_segments) {
+            unshift @rew_segments, '';
+        } else {
+            push @rew_segments, ('', '');
+        }
+        
         my @param = ();
-        if ($rew_rule->{params_others}) {
-           push @param, @{$rew_rule->{params_others}}
+        if ($rew_rule->{params_others} and $rew_rule->{params}->{'&others'}) {
+           push @param, @{$rew_rule->{params}->{'&others'}}
         }
         if ($rew_rule->{param}) {
             for (keys %{$rew_rule->{param}}) {
@@ -296,9 +302,6 @@ sub _make_rewrite {
     my $env  = shift;
     
     my $uri = URI->new($env->{REQUEST_URI});
-    
-    #my @segment = map {length $_ ? $_ : '/'} $uri->path_segments;
-    #shift @segment;# TODO (? remove this)
     
     my @segment = $uri->path_segments;
     shift @segment;
@@ -323,7 +326,10 @@ sub _make_rewrite {
         }
     };
     
-    return unless ($s_key and $self->{params_tree}->{"$s_key"}); 
+    unless ($s_key and $self->{params_tree}->{"$s_key"}) {
+        carp __PACKAGE__.": not found rewrite rule fot '$uri'" if $self->debug;
+        return;
+    }; 
     
     my ($p_key, $params_found);
     # собёрм параметры в хэш
@@ -347,9 +353,12 @@ sub _make_rewrite {
         }
     }
     
-    return unless ($p_key and $self->{rewrite_rules}->{"$p_key"});
+    unless ($p_key and $self->{rewrite_rules}->{"$p_key"}) {
+        carp __PACKAGE__.": not found rewrite rule fot '$uri'" if $self->debug;
+        return;
+    };
     
-    my ($rewrite_url, $rul_name) = $self->{rewrite_rules}->{"$p_key"}->{_sub}->($uri, {segments => $segments_found, });
+    my ($rewrite_url, $rul_name) = $self->{rewrite_rules}->{"$p_key"}->{_sub}->($uri, {segments => $segments_found, params => $params_found});
 
     if ($rewrite_url) {
         # TODO: check default (path can't be null)
@@ -373,7 +382,7 @@ sub __search_from_params {
     
     # найден ключ матча
     if ($tree and not keys %$tree) {
-        $find->{others} = [map {my $k = $_; map {($k, $_)} @{$param_hash->{$k}}} keys %$param_hash];
+        $find->{'&others'} = [map {my $k = $_; map {($k, $_)} @{$param_hash->{$k}}} keys %$param_hash];
         return $tree;
     };    
     
@@ -431,7 +440,7 @@ sub __search_from_segments_fix_depth {
     
     # найден ключ матча
     if ($segments_tree and not keys %$segments_tree and (not defined $segments->[0] or $with_others)) {
-        $find->{others} = $segments;
+        $find->{'&others'} = $segments;
         return $segments_tree;
     };
     
