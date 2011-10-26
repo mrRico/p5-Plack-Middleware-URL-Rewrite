@@ -102,6 +102,8 @@ sub _init {
                         %$desc = ();
                         last;
                     }                    
+#                } elsif ($data->{$_} =~ /^req\.params\.(.+?)$/) {
+#                    
                 } else {
                     # simple value for param
                     my $val = $data->{$_};
@@ -230,10 +232,6 @@ sub __add_params_tree {
     my $hash         = shift;
     
     return $tree unless defined $names_params->[0];
-#    unless (defined $names_params->[0]) {
-#        $tree->{"$tree"} = {};
-#        return $tree->{"$tree"};
-#    };
     
     my $p_name = shift @$names_params;
     my $p_val  = delete $hash->{$p_name};
@@ -246,7 +244,8 @@ sub __add_params_tree {
         $tree->{re}->{$p_name} ||= [];
         my $sub_tree = {};
         my $ret = __add_params_tree($sub_tree, $names_params, $hash);
-        push @{$tree->{re}->{$p_name}}, [$p_val, keys %$sub_tree ? $sub_tree : undef];
+        #push @{$tree->{re}->{$p_name}}, [$p_val, keys %$sub_tree ? $sub_tree : undef];
+        push @{$tree->{re}->{$p_name}}, [$p_val, $sub_tree];
         $tree = $ret;
     } else {
         carp "I don't know what I can do with param $p_name = $p_val";
@@ -335,42 +334,32 @@ sub _make_rewrite {
     }
     # проверяем параметры
     unless ($all_params) {
-        $p_key = $self->{params_tree}->{"$s_key"}->{without_params}->{$s_key};
+        $p_key = $self->{params_tree}->{"$s_key"}->{without_params};
         $params_found = {} if $p_key;
     }
     if (not $p_key and $all_params) {
         my @all_params = sort keys %$all_params;
-        ($p_key, $params_found) = __search_from_params($all_params, $self->{params_tree}->{"$s_key"}->{params}, [@all_params]);
+        if ($self->{params_tree}->{"$s_key"}->{params}) {
+            ($p_key, $params_found) = __search_from_params({%$all_params}, $self->{params_tree}->{"$s_key"}->{params}, [@all_params]);
+        }
         unless ($p_key) {
-            ($p_key, $params_found) = __search_from_params($all_params, $self->{params_tree}->{"$s_key"}->{params_others}, [@all_params]);
+            ($p_key, $params_found) = __search_from_params($all_params, $self->{params_tree}->{"$s_key"}->{params_others}, [@all_params], 'with_others');
         }
     }
     
-        
+    return unless ($p_key and $self->{rewrite_rules}->{"$p_key"});
     
-        
-#    # не найдено дерево для данного числа сегментов
-#    my $tree = $self->{rules}->{depth}->{scalar @segment}; 
-#    return unless $tree; 
-#    
-#    # собёрм параметры в хэш
-#    my $params = {};
-#    for ($uri->query_param) {
-#        my @param = $uri->query_param($_);
-#        $params->{$_} = [@param];
-#    }
-#    
-#    my $rewrite_url = __make_rewrite($tree, $params, @segment);
-#    
-#    if ($rewrite_url) {
-#        # TODO: check default (path can't be null)
-#        $env->{REQUEST_URI}     = "$rewrite_url";
-#        $env->{PATH_INFO}       = $rewrite_url->path;
-#        $env->{QUERY_STRING}    = $rewrite_url->query || '';
-#        carp __PACKAGE__.": rewrite '$uri' to '$rewrite_url'" if $self->debug;
-#    } elsif ($self->debug) {
-#        carp __PACKAGE__.": not found rewrite rule fot '$uri'";
-#    }
+    my ($rewrite_url, $rul_name) = $self->{rewrite_rules}->{"$p_key"}->{_sub}->($uri, {segments => $segments_found, });
+
+    if ($rewrite_url) {
+        # TODO: check default (path can't be null)
+        $env->{REQUEST_URI}     = "$rewrite_url";
+        $env->{PATH_INFO}       = $rewrite_url->path;
+        $env->{QUERY_STRING}    = $rewrite_url->query || '';
+        carp __PACKAGE__.": rewrite '$uri' to '$rewrite_url' (section '$rul_name')" if $self->debug;
+    } elsif ($self->debug) {
+        carp __PACKAGE__.": not found rewrite rule fot '$uri'";
+    }
     
     return;
 }
@@ -379,15 +368,56 @@ sub __search_from_params {
     my $param_hash  = shift;
     my $tree        = shift;
     my $order_param = shift;
+    my $with_others = shift;
+    my $find        = shift || {};
     
-    unless (ref $order_param) {
-        
-        
-    } else {
-        
+    # найден ключ матча
+    if ($tree and not keys %$tree) {
+        $find->{others} = [map {my $k = $_; map {($k, $_)} @{$param_hash->{$k}}} keys %$param_hash];
+        return $tree;
+    };    
+    
+    my $p_name = shift @$order_param;    
+    my $p_val = delete $param_hash->{$p_name} || []; 
+    
+    my $key = undef;
+    
+    # параметров может быть более одного
+    my $i = 0;
+    for (@$p_val) { 
+        if ($tree->{exactly} and $tree->{exactly}->{$p_name.'&'.$_}) {
+            $key = __search_from_params($param_hash, $tree->{exactly}->{$p_name.'&'.$_}, $order_param, $with_others, $find);
+            if ($key) {
+                $find->{$key} = [$_];
+                my @param = splice(@$p_val,$i,1);
+                $param_hash->{$p_name} = [@param] if @param;
+                last;
+            }
+        }
+        $i++;
+    }
+
+    if (not $key and $tree->{re} and $tree->{re}->{$p_name}) {
+        for  my $r (@{$tree->{re}->{$p_name}}) {
+            $i = 0;
+            for (@$p_val) {
+                my @match = $_ =~ $r->[0];
+                if (@match) {
+                    $key = __search_from_params($param_hash, $r->[1], $order_param, $with_others, $find);
+                    if ($key) {
+                        $find->{$key} = [$_, @match];
+                        # возарвщаем отсавшиеся параметры, если требуется
+                        my @param = splice(@$p_val,$i,1);
+                        $param_hash->{$p_name} = [@param] if @param;                        
+                        last;
+                    }
+                }
+                $i++;
+            }
+        }
     }
     
-    return;
+    return $key ? (wantarray ? ($key, $find) : $key) : undef;
 }
 
 sub __search_from_segments_fix_depth {
