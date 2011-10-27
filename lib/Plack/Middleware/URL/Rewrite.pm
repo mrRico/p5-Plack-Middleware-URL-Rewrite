@@ -60,14 +60,12 @@ sub _init {
             } elsif ($_ eq 'req.params.others') {
                 $desc->{req}->{params_others} = $data->{$_};
             } elsif ($_ eq 'rew.params.others') {
-                $desc->{rew}->{params_others} = 1;
+                $desc->{rew}->{params_others} = $data->{$_};
             } elsif ($_ eq 'rew.segments.others') {
-                $desc->{rew}->{segments_others} = 1;
+                $desc->{rew}->{segments_others} = $data->{$_};
             } elsif (/^req\.params\.(.+?)$/) {
                 $desc->{req}->{param}->{$1} = $data->{$_};
             } elsif (/^rew\.segments\[(\d+)\]$/) {
-                $DB::signal = 1;
-                
                 my $i = $1;
                 if ($data->{$_} =~ /^req\.segments\[(\d+)\]\.match\(\$(\d+)\)$/) {
                     my $segment_target = $1;
@@ -147,10 +145,10 @@ sub _init {
         if (keys %$desc) {
         	# set default
         	$desc->{req}->{segments_others} = 0 unless defined $desc->{req}->{segments_others}; 
-        	$desc->{req}->{params_others} ||= 1; 
+        	$desc->{req}->{params_others} = 1 unless defined $desc->{req}->{params_others}; 
         	
         	$desc->{rew}->{segments_others} = 0 unless defined $desc->{rew}->{segments_others};
-        	$desc->{rew}->{params_others} ||=1;
+        	$desc->{rew}->{params_others} =1 unless defined $desc->{rew}->{params_others};
         	
         	# chek root
         	$desc->{req}->{segment}->[0] ||= '';

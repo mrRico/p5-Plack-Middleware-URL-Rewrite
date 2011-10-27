@@ -18,6 +18,17 @@ rew.segments[0]     = bar
 rew.segments[1]     = mode
 rew.segments[2]     = req.params.mode
 
+[rewrite /foo/baz/bar?mode=submode&... => /bar/was_param/submode/baz/bar ]
+req.segments[0]     = foo
+req.params.mode     =~ /^(.+?)$/
+req.segments.others = 1
+
+rew.segments[0]     = bar
+rew.segments[1]     = was_param
+rew.segments[2]     = req.params.mode
+rew.segments.others = 1
+rew.params.others   = 0
+
 [rewrite /foo/baz/bar?mode=submode => /bar/mode/submode/baz/bar ]
 req.segments[0]     = foo
 req.params.mode     =~ /^(.+?)$/
@@ -28,4 +39,5 @@ rew.segments[0]     = bar
 rew.segments[1]     = mode
 rew.segments[2]     = req.params.mode
 rew.segments.others = 1
+
 

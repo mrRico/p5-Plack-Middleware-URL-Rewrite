@@ -19,10 +19,11 @@ use Cwd 'abs_path';
     can_ok($r,'_make_rewrite');    
     
     my $rew_ex = {
-        '/foo/123/ann/bann/zzed?baz=2011' => '/foo/12/3?baz=2011',
-        '/foo/123/ann/bann/zzed?baz=2011&foo=bar' => '/foo/12/3?foo=bar&baz=2011',
-        '/foo?mode=some&bar=baz' => '/bar/mode/some?bar=baz',
-        '/foo/baz/bar?mode=submode' => '/bar/mode/submode/baz/bar'
+        #'/foo/123/ann/bann/zzed?baz=2011' => '/foo/12/3?baz=2011',
+        #'/foo/123/ann/bann/zzed?baz=2011&foo=bar' => '/foo/12/3?foo=bar&baz=2011',
+        #'/foo?mode=some&bar=baz' => '/bar/mode/some?bar=baz',
+        '/foo/baz/bar?mode=submode&any=12' => '/bar/was_param/submode/baz/bar',
+        #'/foo/baz/bar?mode=submode' => '/bar/mode/submode/baz/bar'
     };
     
     for (keys %$rew_ex) {
