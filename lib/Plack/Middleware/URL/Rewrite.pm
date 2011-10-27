@@ -66,6 +66,8 @@ sub _init {
             } elsif (/^req\.params\.(.+?)$/) {
                 $desc->{req}->{param}->{$1} = $data->{$_};
             } elsif (/^rew\.segments\[(\d+)\]$/) {
+                $DB::signal = 1;
+                
                 my $i = $1;
                 if ($data->{$_} =~ /^req\.segments\[(\d+)\]\.match\(\$(\d+)\)$/) {
                     my $segment_target = $1;
@@ -81,6 +83,38 @@ sub _init {
                         %$desc = ();
                         last;
                     }
+                } elsif ($data->{$_} =~ /^req\.params\.(.+?)$/) {
+                    if ($data->{$_} =~ /^req\.params\.(.+?)\.match\(\$(\d+)\)$/) {
+                        my $param_target = $1;
+                        my $match_target = $2;
+                        if ($data->{'__req.params.'.$param_target} and ref $data->{'__req.params.'.$param_target}->[0] eq 'Regexp' and $match_target-1 > -1) {
+                            # параметр описан регуляркой
+                            $desc->{rew}->{segment}->[$i] = sub {
+                                $_[0]->{params}->{$param_target}->[$match_target] || '';
+                            };
+                        } else {
+                            # ссылка на сегмент, который не был описан или был описан не регекспом
+                            croak __PACKAGE__.": found error in describe '$_ = ".$data->{$_}."'";
+                            %$desc = ();
+                            last;
+                        }                    
+                    } elsif ($data->{$_} =~ /^req\.params\.(.+?)$/) {
+                        my $p_name = $1;
+                        if ($data->{'__req.params.'.$p_name}) {
+                            $desc->{rew}->{segment}->[$i] = sub {
+                                $_[0]->{params}->{$p_name}->[0] || '';
+                            };
+                        } else {
+                            # ссылка на параметр, который не был описан или был описан не регекспом
+                            croak __PACKAGE__.": found error in describe '$_ = ".$data->{$_}."'";
+                            %$desc = ();
+                            last;
+                        }
+                    } else {
+                        # simple value for param
+                        my $val = $data->{$_};
+                        $desc->{rew}->{segment}->[$i] = $val;
+                    }                    
                 } else {
                     # simple value for segment
                     my $val = $data->{$_};
@@ -102,8 +136,6 @@ sub _init {
                         %$desc = ();
                         last;
                     }                    
-#                } elsif ($data->{$_} =~ /^req\.params\.(.+?)$/) {
-#                    
                 } else {
                     # simple value for param
                     my $val = $data->{$_};
@@ -145,8 +177,6 @@ sub _init {
         # чтобы не тратить потом время на сортировку ключей для uri без определённой глубины
         @{$self->{segments_tree}->{segments_others}->{depths}} = sort {$b <=> $a} @{$self->{segments_tree}->{segments_others}->{depths}};
     }
-    
-    #$DB::signal = 1;
     
     $self->{modified} = $modified;
     $self->{has_rule} = keys %{$self->{segments_tree}} ? 1 : 0;
@@ -278,8 +308,8 @@ sub __make_rewrite_rules {
         }
         
         my @param = ();
-        if ($rew_rule->{params_others} and $rew_rule->{params}->{'&others'}) {
-           push @param, @{$rew_rule->{params}->{'&others'}}
+        if ($rew_rule->{params_others} and $found->{params}->{'&others'}) {
+           push @param, @{$found->{params}->{'&others'}}
         }
         if ($rew_rule->{param}) {
             for (keys %{$rew_rule->{param}}) {
@@ -382,48 +412,58 @@ sub __search_from_params {
     
     # найден ключ матча
     if ($tree and not keys %$tree) {
-        $find->{'&others'} = [map {my $k = $_; map {($k, $_)} @{$param_hash->{$k}}} keys %$param_hash];
+        $find->{'&others'} ||= [];
+        push @{$find->{'&others'}}, map {my $k = $_; map {($k, $_)} @{$param_hash->{$k}}} keys %$param_hash;
         return $tree;
     };    
     
-    my $p_name = shift @$order_param;    
-    my $p_val = delete $param_hash->{$p_name} || []; 
-    
     my $key = undef;
-    
-    # параметров может быть более одного
-    my $i = 0;
-    for (@$p_val) { 
-        if ($tree->{exactly} and $tree->{exactly}->{$p_name.'&'.$_}) {
-            $key = __search_from_params($param_hash, $tree->{exactly}->{$p_name.'&'.$_}, $order_param, $with_others, $find);
-            if ($key) {
-                $find->{$key} = [$_];
-                my @param = splice(@$p_val,$i,1);
-                $param_hash->{$p_name} = [@param] if @param;
-                last;
-            }
-        }
-        $i++;
-    }
-
-    if (not $key and $tree->{re} and $tree->{re}->{$p_name}) {
-        for  my $r (@{$tree->{re}->{$p_name}}) {
-            $i = 0;
-            for (@$p_val) {
-                my @match = $_ =~ $r->[0];
-                if (@match) {
-                    $key = __search_from_params($param_hash, $r->[1], $order_param, $with_others, $find);
-                    if ($key) {
-                        $find->{$p_name} = [$_, @match];
-                        # возарвщаем отсавшиеся параметры, если требуется
-                        my @param = splice(@$p_val,$i,1);
-                        $param_hash->{$p_name} = [@param] if @param;                        
-                        last;
-                    }
+    while (defined $order_param->[0]) {
+        my $p_name = shift @$order_param;    
+        my $p_val = delete $param_hash->{$p_name} || []; 
+        
+        
+        # параметров может быть более одного
+        my $i = 0;
+        for (@$p_val) { 
+            if ($tree->{exactly} and $tree->{exactly}->{$p_name.'&'.$_}) {
+                $key = __search_from_params($param_hash, $tree->{exactly}->{$p_name.'&'.$_}, $order_param, $with_others, $find);
+                if ($key) {
+                    $find->{$p_name} = [$_];
+                    my @param = splice(@$p_val,$i,1);
+                    $param_hash->{$p_name} = [@param] if @param;
+                    last;
                 }
-                $i++;
+            }
+            $i++;
+        }
+    
+        if (not $key and $tree->{re} and $tree->{re}->{$p_name}) {
+            for  my $r (@{$tree->{re}->{$p_name}}) {
+                $i = 0;
+                for (@$p_val) {
+                    my @match = $_ =~ $r->[0];
+                    if (@match) {
+                        $key = __search_from_params($param_hash, $r->[1], $order_param, $with_others, $find);
+                        if ($key) {
+                            $find->{$p_name} = [$_, @match];
+                            # возарвщаем отсавшиеся параметры, если требуется
+                            my @param = splice(@$p_val,$i,1);
+                            $param_hash->{$p_name} = [@param] if @param;                        
+                            last;
+                        }
+                    }
+                    $i++;
+                }
             }
         }
+        
+        if ($key) {
+            last;
+        } else {
+            $find->{'&others'} ||= [];
+            push @{$find->{'&others'}}, map {($p_name, $_)} @$p_val;
+        };
     }
     
     return $key ? (wantarray ? ($key, $find) : $key) : undef;
@@ -480,13 +520,6 @@ sub __search_from_segments_with_others {
     __search_from_segments_fix_depth(@_, {}, -1, 'with_others')
 }
 
-
-#sub __make_rewrite {
-#    my ($tree, $params, @segment) = @_;
-#    
-#    
-#    return;
-#}
 
 1;
 __END__

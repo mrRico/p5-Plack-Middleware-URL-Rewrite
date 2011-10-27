@@ -1,0 +1,31 @@
+
+[rewrite /foo/(\d{0,2})(\d+)/:any/:any/zzed?baz=2011blah&... => /foo/s1:$1/s1:$2?...&baz=2011 ]
+req.segments[0]     = foo
+req.segments[1]     =~ /^(\d{0,2})(\d+)$/
+req.segments[4]     = zzed
+req.params.baz      =~ /^(\d{4})/
+
+rew.segments[0]     = foo
+rew.segments[1]     = req.segments[1].match($1)
+rew.segments[2]     = req.segments[1].match($2)
+rew.params.baz      = req.params.baz.match($1)  
+
+[rewrite /foo?mode=submode&... => /bar/mode/submode?... ]
+req.segments[0]     = foo
+req.params.mode     =~ /^(.+?)$/
+
+rew.segments[0]     = bar
+rew.segments[1]     = mode
+rew.segments[2]     = req.params.mode
+
+[rewrite /foo/baz/bar?mode=submode => /bar/mode/submode/baz/bar ]
+req.segments[0]     = foo
+req.params.mode     =~ /^(.+?)$/
+req.segments.others = 1
+req.params.others   = 0
+
+rew.segments[0]     = bar
+rew.segments[1]     = mode
+rew.segments[2]     = req.params.mode
+rew.segments.others = 1
+
