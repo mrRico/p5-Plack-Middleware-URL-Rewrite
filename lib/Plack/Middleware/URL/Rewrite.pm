@@ -414,7 +414,7 @@ sub __search_from_params {
                 if (@match) {
                     $key = __search_from_params($param_hash, $r->[1], $order_param, $with_others, $find);
                     if ($key) {
-                        $find->{$key} = [$_, @match];
+                        $find->{$p_name} = [$_, @match];
                         # возарвщаем отсавшиеся параметры, если требуется
                         my @param = splice(@$p_val,$i,1);
                         $param_hash->{$p_name} = [@param] if @param;                        
